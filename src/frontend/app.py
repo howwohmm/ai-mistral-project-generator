@@ -7,28 +7,29 @@ from pathlib import Path
 import os
 import time
 import shutil
+from dotenv import load_dotenv
 
 class AICreativeCollaborator:
     def __init__(self):
-        # Try port 8000 first, then 8001 if needed
-        self.api_url = self._get_backend_url()
+        # Use environment variable for API URL with fallback to local development
+        load_dotenv()
+        
+        # For web deployment: use environment variable for backend URL
+        self.api_url = os.getenv("BACKEND_API_URL", "http://localhost:8000")
+        
+        # Add option to override with Streamlit secrets if available
+        try:
+            self.api_url = st.secrets.get("BACKEND_API_URL", self.api_url)
+        except:
+            pass
+            
+        st.sidebar.info(f"🔌 Connected to API: {self.api_url}")
+        
         self.cursor_path = "/Applications/Cursor.app/Contents/MacOS/Cursor"
         # Define timeouts as class constants
         self.CHAT_TIMEOUT = 300  # 5 minutes for chat
         self.PRD_TIMEOUT = 600   # 10 minutes for PRD generation
         self.PROJECT_TIMEOUT = 60 # 1 minute for project creation
-
-    def _get_backend_url(self):
-        """Try to connect to backend on ports 8000 and 8001"""
-        try:
-            requests.get("http://localhost:8000/health", timeout=1)
-            return "http://localhost:8000"
-        except:
-            try:
-                requests.get("http://localhost:8001/health", timeout=1)
-                return "http://localhost:8001"
-            except:
-                return "http://localhost:8000"  # Default
 
     def initialize_session(self):
         if "messages" not in st.session_state:
@@ -127,7 +128,7 @@ class AICreativeCollaborator:
             if not st.button("Create Project Now", type="primary"):
                 return None
                 
-            with st.spinner("Creating Cursor project..."):
+            with st.spinner("Creating project..."):
                 # First, add the port 3000 to the project links
                 if "projectLinks" in spec:
                     spec["projectLinks"]["frontend"] = "http://localhost:3000"
@@ -149,33 +150,72 @@ class AICreativeCollaborator:
                     "backend": "http://localhost:3001"
                 }
                 
-                # Create a new Cursor project using command line
-                try:
-                    # First close any existing Cursor instances to avoid conflicts
-                    subprocess.run(["pkill", "-f", "Cursor"], stderr=subprocess.DEVNULL)
-                    subprocess.run(["sleep", "1"])
+                # Check if running on Streamlit Cloud
+                is_web_deployment = ('STREAMLIT_SHARING' in os.environ or
+                                    'STREAMLIT_SERVER_HEADLESS' in os.environ or
+                                    'WEBSITE_HOSTNAME' in os.environ)
+                
+                if is_web_deployment:
+                    # Create a ZIP file for download instead of opening Cursor
+                    st.success("Project created! Download it below:")
                     
-                    # Create a folder with just the user-provided name (no timestamp)
-                    new_project_dir = Path(os.path.expanduser("~")) / "Documents" / "cursor_projects" / project_name
+                    # For web deployment - create a ZIP file for downloading
+                    import zipfile
+                    import io
                     
-                    # Create parent directories if they don't exist
-                    new_project_dir.parent.mkdir(parents=True, exist_ok=True)
+                    # Create a BytesIO object
+                    zip_buffer = io.BytesIO()
                     
-                    # If directory exists, remove it to avoid conflicts
-                    if new_project_dir.exists():
-                        shutil.rmtree(new_project_dir)
+                    # Creating the ZIP file
+                    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                        for root, dirs, files in os.walk(project_dir):
+                            for file in files:
+                                file_path = os.path.join(root, file)
+                                # Calculate the relative path
+                                rel_path = os.path.relpath(file_path, project_dir)
+                                zip_file.write(file_path, os.path.join(project_name, rel_path))
+                    
+                    # Reset buffer position to start
+                    zip_buffer.seek(0)
+                    
+                    # Provide download button
+                    st.download_button(
+                        label="Download Project as ZIP",
+                        data=zip_buffer,
+                        file_name=f"{project_name}.zip",
+                        mime="application/zip"
+                    )
+                    
+                    return project_dir
+                    
+                else:
+                    # Local deployment - Create a new Cursor project using command line
+                    try:
+                        # First close any existing Cursor instances to avoid conflicts
+                        subprocess.run(["pkill", "-f", "Cursor"], stderr=subprocess.DEVNULL)
+                        subprocess.run(["sleep", "1"])
                         
-                    new_project_dir.mkdir(exist_ok=True)
-                    
-                    # Copy files from project_dir to new_project_dir
-                    for item in Path(project_dir).glob('*'):
-                        if item.is_file():
-                            shutil.copy2(item, new_project_dir)
-                        elif item.is_dir():
-                            shutil.copytree(item, new_project_dir / item.name)
-                    
-                    # Create the IMPLEMENT_PRD.txt with the FULL PRD content
-                    prd_content = f"""# {spec['title']} - PRD
+                        # Create a folder with just the user-provided name (no timestamp)
+                        new_project_dir = Path(os.path.expanduser("~")) / "Documents" / "cursor_projects" / project_name
+                        
+                        # Create parent directories if they don't exist
+                        new_project_dir.parent.mkdir(parents=True, exist_ok=True)
+                        
+                        # If directory exists, remove it to avoid conflicts
+                        if new_project_dir.exists():
+                            shutil.rmtree(new_project_dir)
+                            
+                        new_project_dir.mkdir(exist_ok=True)
+                        
+                        # Copy files from project_dir to new_project_dir
+                        for item in Path(project_dir).glob('*'):
+                            if item.is_file():
+                                shutil.copy2(item, new_project_dir)
+                            elif item.is_dir():
+                                shutil.copytree(item, new_project_dir / item.name)
+                        
+                        # Create the IMPLEMENT_PRD.txt with the FULL PRD content
+                        prd_content = f"""# {spec['title']} - PRD
 
 ## Please implement this PRD in a new project
 Start a development server on port 3000.
@@ -185,49 +225,49 @@ Start a development server on port 3000.
 
 ## Features
 """
-                    # Add features
-                    for feature in spec['features']:
-                        prd_content += f"- {feature['name']} ({feature['priority']}): {feature['description']}\n"
-                    
-                    prd_content += "\n## Technologies\n"
-                    for tech in spec['technologies']:
-                        prd_content += f"- {tech['name']}: {tech['purpose']}\n"
-                    
-                    prd_content += f"\n## Architecture\nType: {spec['architecture']['type']}\n\nComponents:\n"
-                    for comp in spec['architecture']['components']:
-                        prd_content += f"- {comp['name']}: {comp['purpose']}\n"
-                        prd_content += f"  Interactions: {', '.join(comp['interactions'])}\n"
-                    
-                    prd_content += "\n## Implementation Plan\n"
-                    for i, phase in enumerate(spec['implementationPlan']):
-                        prd_content += f"### Phase {i+1}: {phase['phase']} ({phase['duration']})\n"
-                        for task in phase['tasks']:
-                            prd_content += f"- {task['name']} ({task['duration']})\n"
-                    
-                    # Write the full PRD content to IMPLEMENT_PRD.txt
-                    with open(new_project_dir / "IMPLEMENT_PRD.txt", "w") as f:
-                        f.write(prd_content)
-                    
-                    # Add a package.json with port 3000 configured
-                    package_json = {
-                        "name": project_name,
-                        "version": "1.0.0",
-                        "description": spec["description"],
-                        "main": "index.js",
-                        "scripts": {
-                            "start": "node server.js",
-                            "dev": "nodemon server.js"
-                        },
-                        "dependencies": {},
-                        "devDependencies": {},
-                        "port": 3000
-                    }
-                    
-                    with open(new_project_dir / "package.json", "w") as f:
-                        json.dump(package_json, f, indent=2)
-                    
-                    # Create a basic server file that uses port 3000
-                    server_js = """const http = require('http');
+                        # Add features
+                        for feature in spec['features']:
+                            prd_content += f"- {feature['name']} ({feature['priority']}): {feature['description']}\n"
+                        
+                        prd_content += "\n## Technologies\n"
+                        for tech in spec['technologies']:
+                            prd_content += f"- {tech['name']}: {tech['purpose']}\n"
+                        
+                        prd_content += f"\n## Architecture\nType: {spec['architecture']['type']}\n\nComponents:\n"
+                        for comp in spec['architecture']['components']:
+                            prd_content += f"- {comp['name']}: {comp['purpose']}\n"
+                            prd_content += f"  Interactions: {', '.join(comp['interactions'])}\n"
+                        
+                        prd_content += "\n## Implementation Plan\n"
+                        for i, phase in enumerate(spec['implementationPlan']):
+                            prd_content += f"### Phase {i+1}: {phase['phase']} ({phase['duration']})\n"
+                            for task in phase['tasks']:
+                                prd_content += f"- {task['name']} ({task['duration']})\n"
+                        
+                        # Write the full PRD content to IMPLEMENT_PRD.txt
+                        with open(new_project_dir / "IMPLEMENT_PRD.txt", "w") as f:
+                            f.write(prd_content)
+                        
+                        # Add a package.json with port 3000 configured
+                        package_json = {
+                            "name": project_name,
+                            "version": "1.0.0",
+                            "description": spec["description"],
+                            "main": "index.js",
+                            "scripts": {
+                                "start": "node server.js",
+                                "dev": "nodemon server.js"
+                            },
+                            "dependencies": {},
+                            "devDependencies": {},
+                            "port": 3000
+                        }
+                        
+                        with open(new_project_dir / "package.json", "w") as f:
+                            json.dump(package_json, f, indent=2)
+                        
+                        # Create a basic server file that uses port 3000
+                        server_js = """const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
@@ -242,22 +282,22 @@ server.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}/`);
 });
 """
-                    with open(new_project_dir / "server.js", "w") as f:
-                        f.write(server_js)
-                    
-                    # Open in a NEW Cursor window with absolute path
-                    subprocess.Popen([self.cursor_path, "--new-window", str(new_project_dir.absolute())])
-                    
-                    # Update project_dir to the new location
-                    st.session_state.project_links["project_dir"] = str(new_project_dir.absolute())
-                    
-                    return str(new_project_dir.absolute())
-                except Exception as e:
-                    st.error(f"Error setting up Cursor project: {str(e)}")
-                    return project_dir  # Still return the directory even if cursor launch fails
+                        with open(new_project_dir / "server.js", "w") as f:
+                            f.write(server_js)
+                        
+                        # Open in a NEW Cursor window with absolute path
+                        subprocess.Popen([self.cursor_path, "--new-window", str(new_project_dir.absolute())])
+                        
+                        # Update project_dir to the new location
+                        st.session_state.project_links["project_dir"] = str(new_project_dir.absolute())
+                        
+                        return str(new_project_dir.absolute())
+                    except Exception as e:
+                        st.error(f"Error setting up Cursor project: {str(e)}")
+                        return project_dir  # Still return the directory even if cursor launch fails
                 
         except requests.exceptions.RequestException as e:
-            st.error(f"Error creating Cursor project: {str(e)}")
+            st.error(f"Error creating project: {str(e)}")
             return None
 
 def main():
