@@ -1,0 +1,18 @@
+{
+  "mcp": {
+    "enabled": true,
+    "port": 8765,
+    "host": "127.0.0.1",
+    "allowedOrigins": ["*"]
+  },
+  "features": {
+    "codeGeneration": {
+      "enabled": true,
+      "model": "claude-3-opus-20240229"
+    }
+  },
+  "security": {
+    "allowLocalFileAccess": true,
+    "allowNetworkAccess": true
+  }
+} 
