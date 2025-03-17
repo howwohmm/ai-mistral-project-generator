@@ -1,28 +1,15 @@
-    def chat_with_ai(self, messages):
+    def generate_prd(self, messages):
         try:
-            with st.spinner("Getting response from Mistral..."):
-                # Only add user messages, let backend handle system message
-                user_messages = []
-                for msg in messages:
-                    # Skip any existing system messages from the frontend
-                    if msg["role"] != "system":
-                        user_messages.append({"role": msg["role"], "content": msg["content"]})
-                
-                print(f"Sending {len(user_messages)} messages to backend")
-                
-                # Send request to backend API - make sure we're using the correct endpoint
-                # The API URL already includes /api, so we don't need to add it again
-                endpoint = "/chat"
-                
-                # Debug the full URL being called
+            with st.spinner("Generating PRD with Mistral... This may take a few minutes."):
+                # We don't need to add a system message - backend will handle that
+                endpoint = "/generate-prd"
                 full_url = f"{self.api_url}{endpoint}"
                 print(f"Calling API at: {full_url}")
-                st.sidebar.info(f"Calling: {full_url}")
                 
                 response = requests.post(
                     full_url,
-                    json={"messages": user_messages},
-                    timeout=self.CHAT_TIMEOUT
+                    json={"messages": [{"role": m["role"], "content": m["content"]} for m in messages]},
+                    timeout=self.PRD_TIMEOUT
                 )
                 
                 if response.status_code == 500:
@@ -31,15 +18,20 @@
                     return None
                     
                 response.raise_for_status()
-                result = response.json()
-                print(f"Received response: {result['response'][:100]}...")
-                return result["response"]
+                prd_json = response.json()
+                
+                # Store project links if available
+                if "projectLinks" in prd_json:
+                    st.session_state.project_links = prd_json["projectLinks"]
+                
+                return prd_json
+                
         except requests.exceptions.ConnectionError:
-            st.error(f"Could not connect to the backend server at {self.api_url}. Please ensure it's running.")
+            st.error("Could not connect to the backend server. Please ensure it's running.")
             return None
         except requests.exceptions.Timeout:
-            st.error("Request timed out. Mistral is taking longer than expected to respond.")
+            st.error("Request timed out. PRD generation is taking longer than expected (>10 minutes).")
             return None
         except requests.exceptions.RequestException as e:
-            st.error(f"Error communicating with backend: {str(e)}")
+            st.error(f"Error generating PRD: {str(e)}")
             return None
