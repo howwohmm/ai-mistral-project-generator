@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 import sys
 import os
 import json
@@ -17,6 +18,15 @@ load_dotenv()
 
 # Create a new FastAPI app for Vercel
 app = FastAPI()
+
+# Add CORS middleware to allow requests from any origin
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all methods
+    allow_headers=["*"],  # Allow all headers
+)
 
 # Initialize Mistral client
 api_key = os.getenv('MISTRAL_API_KEY')
@@ -50,16 +60,31 @@ async def health_check():
             "error": str(e)
         }
 
+# Debug endpoint to echo back the request
+@app.post("/api/debug")
+async def debug(request: Request):
+    body = await request.json()
+    return {
+        "received": body,
+        "headers": dict(request.headers),
+        "method": request.method,
+        "url": str(request.url)
+    }
+
 # Chat endpoint
 @app.post("/api/chat")
 async def chat(request: Request):
     try:
+        # Log the raw request
+        body_raw = await request.body()
+        logger.info(f"Raw request body: {body_raw}")
+        
         # Parse request body
         body = await request.json()
-        messages = body.get("messages", [])
+        logger.info(f"Parsed request body: {body}")
         
-        # Log incoming request
-        logger.info("Received chat request")
+        messages = body.get("messages", [])
+        logger.info(f"Extracted messages: {messages}")
         
         # Count previous messages to determine phase
         user_msg_count = sum(1 for msg in messages if msg["role"] == "user")
@@ -228,6 +253,7 @@ async def read_root():
         <ul>
             <li><a href="/api/health">/api/health</a> - Check API health</li>
             <li><code>/api/chat</code> - Chat with Mistral (POST)</li>
+            <li><code>/api/debug</code> - Debug request (POST)</li>
         </ul>
         <a href="https://github.com/howwohmm/ai-mistral-project-generator" class="btn">View on GitHub</a>
     </body>
